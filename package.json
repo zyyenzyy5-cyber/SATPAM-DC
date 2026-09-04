@@ -1,0 +1,21 @@
+{
+  "name": "satpam-bot",
+  "version": "1.0.0",
+  "description": "Discord bot satpam untuk membatasi mention @everyone dengan sistem timeout bertahap",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test/test-satpam.js"
+  },
+  "keywords": ["discord", "bot", "satpam", "moderation", "timeout"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

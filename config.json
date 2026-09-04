@@ -1,0 +1,13 @@
+{
+  "max_allowed_per_day": 3,
+  "base_timeout_minutes": 15,
+  "increment_timeout_minutes": 15,
+  "sliding_window_hours": 24,
+  "delete_violating_message": true,
+  "exempt_admins": true,
+  "exempt_roles": [],
+  "stealth_mode": true,
+  "notify_violator_via_dm": true,
+  "notify_owner_via_dm": true
+}
+
