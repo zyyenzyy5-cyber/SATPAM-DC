@@ -8,6 +8,16 @@
   "exempt_roles": [],
   "stealth_mode": true,
   "notify_violator_via_dm": true,
-  "notify_owner_via_dm": true
+  "notify_owner_via_dm": true,
+  "bot_handler_role": {
+    "enabled": true,
+    "role_name": "BOT HANDLER",
+    "color": "#F1C40F",
+    "hoist": true
+  },
+  "admin_notifications": {
+    "channel_name_or_id": "satpam-log",
+    "notify_admins_via_dm": false
+  }
 }
 

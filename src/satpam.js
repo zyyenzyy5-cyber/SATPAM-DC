@@ -69,22 +69,33 @@ export function calculateTimeoutDuration(timeoutCount, config) {
  * @returns {boolean}
  */
 export function isMemberExempt(member, config) {
-  if (!member || member.user.bot) return true;
+  if (!member || member.user?.bot) return true;
 
   // Cek apakah member adalah pemilik server
-  if (member.guild.ownerId === member.id) return true;
+  if (member.guild?.ownerId === member.id) return true;
+
+  // Cek apakah member memiliki role BOT HANDLER
+  const handlerRoleName = config?.bot_handler_role?.role_name || 'BOT HANDLER';
+  if (member.roles?.cache?.some(role => role.name.toLowerCase() === handlerRoleName.toLowerCase())) {
+    return true;
+  }
+
+  // Cek jika member terdaftar sebagai bot owner (dari .env atau cache)
+  if (process.env.BOT_OWNER_ID && member.id === process.env.BOT_OWNER_ID.trim()) {
+    return true;
+  }
 
   // Cek jika administrator diabaikan
-  if (config.exempt_admins) {
-    if (member.permissions.has(PermissionsBitField.Flags.Administrator) ||
-        member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+  if (config?.exempt_admins) {
+    if (member.permissions?.has(PermissionsBitField.Flags.Administrator) ||
+        member.permissions?.has(PermissionsBitField.Flags.ManageGuild)) {
       return true;
     }
   }
 
   // Cek role yang ada dalam daftar whitelist
-  if (Array.isArray(config.exempt_roles) && config.exempt_roles.length > 0) {
-    const hasExemptRole = member.roles.cache.some(role => config.exempt_roles.includes(role.id));
+  if (Array.isArray(config?.exempt_roles) && config.exempt_roles.length > 0) {
+    const hasExemptRole = member.roles?.cache?.some(role => config.exempt_roles.includes(role.id));
     if (hasExemptRole) return true;
   }
 
@@ -163,6 +174,72 @@ export async function sendReportToOwner(client, guild, embed, components = []) {
     }
   } catch (err) {
     console.warn('[Satpam] Gagal mengirim laporan DM ke owner:', err.message);
+  }
+}
+
+/**
+ * Mengirim laporan timeout ke DM Owner dan/atau Channel Khusus Admin Log
+ * @param {import('discord.js').Client} client
+ * @param {import('discord.js').Guild} guild
+ * @param {import('discord.js').EmbedBuilder} embed
+ * @param {import('discord.js').ActionRowBuilder[]} [components]
+ * @param {any} [config]
+ */
+export async function sendReportToAdminsAndOwner(client, guild, embed, components = [], config = {}) {
+  // 1. Kirim ke Channel Log Khusus Admin (jika dikonfigurasi)
+  const channelTarget = config?.admin_notifications?.channel_name_or_id || 'satpam-log';
+  if (channelTarget && guild) {
+    try {
+      let targetChannel = guild.channels.cache.get(channelTarget) ||
+        guild.channels.cache.find(ch => ch.isTextBased() && ch.name.toLowerCase() === channelTarget.toLowerCase());
+
+      if (!targetChannel) {
+        const channels = await guild.channels.fetch().catch(() => null);
+        if (channels) {
+          targetChannel = channels.get(channelTarget) ||
+            channels.find(ch => ch && ch.isTextBased() && ch.name.toLowerCase() === channelTarget.toLowerCase());
+        }
+      }
+
+      if (targetChannel && targetChannel.isTextBased()) {
+        const botPerms = targetChannel.permissionsFor(guild.members.me);
+        if (!botPerms || botPerms.has(PermissionsBitField.Flags.SendMessages)) {
+          const payload = { embeds: [embed] };
+          if (components && components.length > 0) {
+            payload.components = components;
+          }
+          await targetChannel.send(payload).catch(err =>
+            console.warn(`[Satpam] Gagal kirim pesan ke log channel #${targetChannel.name}:`, err.message)
+          );
+          console.log(`[Satpam] 📢 Laporan timeout berhasil dikirim ke channel #${targetChannel.name}.`);
+        }
+      }
+    } catch (err) {
+      console.warn('[Satpam] Gagal mengirim laporan ke admin log channel:', err.message);
+    }
+  }
+
+  // 2. Kirim DM ke Semua Admin jika opsi diaktifkan
+  if (config?.admin_notifications?.notify_admins_via_dm && guild) {
+    try {
+      const members = await guild.members.fetch().catch(() => guild.members.cache);
+      for (const [, m] of members) {
+        if (!m.user.bot && m.permissions.has(PermissionsBitField.Flags.Administrator)) {
+          const payload = { embeds: [embed] };
+          if (components && components.length > 0) {
+            payload.components = components;
+          }
+          await m.send(payload).catch(() => null);
+        }
+      }
+    } catch (err) {
+      console.warn('[Satpam] Gagal mengirim DM ke seluruh admin:', err.message);
+    }
+  }
+
+  // 3. Kirim ke DM Owner (Terima Beres)
+  if (config?.notify_owner_via_dm !== false) {
+    await sendReportToOwner(client, guild, embed, components);
   }
 }
 
@@ -280,33 +357,31 @@ export async function handleMessage(message) {
       await message.channel.send({ embeds: [embedTimeout] }).catch(() => null);
     }
 
-    // 2. Laporan Otomatis ke DM Owner dengan tombol interaktif buka timeout
-    if (config.notify_owner_via_dm) {
-      const embedOwnerReport = new EmbedBuilder()
-        .setColor(0x5865F2)
-        .setTitle('👮 Laporan Satpam: Member Dikenakan Timeout')
-        .setDescription(
-          `Halo Owner! Bot Satpam baru saja menindak member di server Anda.\n\n` +
-          `🏠 **Server:** ${message.guild.name}\n` +
-          `👤 **Pelanggar:** ${member.user.tag} (<@${member.id}>)\n` +
-          `📊 **Pelanggaran:** Tag \`@everyone\` ke-${countToday} (Batas kuota: ${maxFree}x)\n` +
-          `⏱️ **Tindakan:** Timeout selama **${durationMinutes} Menit**\n` +
-          `🔢 **Sanksi ke-:** ${timeoutCountBefore + 1}\n\n` +
-          `*Ingin membebaskan member ini lebih awal? Cukup klik tombol di bawah:*`
-        )
-        .setThumbnail(member.user.displayAvatarURL())
-        .setTimestamp();
+    // 2. Laporan Otomatis ke DM Owner dan/atau Channel Admin Log dengan tombol interaktif buka timeout
+    const embedOwnerReport = new EmbedBuilder()
+      .setColor(0x5865F2)
+      .setTitle('👮 Laporan Satpam: Member Dikenakan Timeout')
+      .setDescription(
+        `Halo Admin/Owner! Bot Satpam baru saja menindak member di server **${message.guild.name}**.\n\n` +
+        `🏠 **Server:** ${message.guild.name}\n` +
+        `👤 **Pelanggar:** ${member.user.tag} (<@${member.id}>)\n` +
+        `📊 **Pelanggaran:** Tag \`@everyone\` ke-${countToday} (Batas kuota: ${maxFree}x)\n` +
+        `⏱️ **Tindakan:** Timeout selama **${durationMinutes} Menit**\n` +
+        `🔢 **Sanksi ke-:** ${timeoutCountBefore + 1}\n\n` +
+        `*Ingin membebaskan member ini lebih awal? Cukup klik tombol di bawah:*`
+      )
+      .setThumbnail(member.user.displayAvatarURL())
+      .setTimestamp();
 
-      const actionRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`untimeout_${message.guild.id}_${member.id}`)
-          .setLabel('Buka Timeout & Reset Kuota')
-          .setStyle(ButtonStyle.Success)
-          .setEmoji('🔓')
-      );
+    const actionRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`untimeout_${message.guild.id}_${member.id}`)
+        .setLabel('Buka Timeout & Reset Kuota')
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('🔓')
+    );
 
-      await sendReportToOwner(message.client, message.guild, embedOwnerReport, [actionRow]);
-    }
+    await sendReportToAdminsAndOwner(message.client, message.guild, embedOwnerReport, [actionRow], config);
 
   } catch (err) {
     console.error(`[Satpam] Gagal memberikan timeout kepada ${member.user.tag}:`, err);

@@ -16,6 +16,7 @@ import {
 } from 'discord.js';
 import { handleMessage, loadConfig, calculateTimeoutDuration } from './satpam.js';
 import { getUserRecord, resetUserRecord } from './storage.js';
+import { ensureBotHandlerRole, getBotOwnerIds } from './handlerRole.js';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -151,8 +152,38 @@ client.once(Events.ClientReady, async (c) => {
     }
   }
 
+  // Setup otomatis role BOT HANDLER di semua server yang terhubung
+  for (const guild of c.guilds.cache.values()) {
+    await ensureBotHandlerRole(guild, c, config).catch(err =>
+      console.warn(`[Role Setup] Gagal setup role di server "${guild.name}":`, err.message)
+    );
+  }
+
   // Registrasi slash command secara otomatis menggunakan Application ID bot
   await registerCommands(c.application?.id || c.user.id);
+});
+
+// Event: Ketika bot diundang atau masuk ke server baru
+client.on(Events.GuildCreate, async (guild) => {
+  const config = loadConfig();
+  console.log(`\n[Satpam] 📥 Bot baru saja bergabung ke server: "${guild.name}" (ID: ${guild.id})`);
+  await ensureBotHandlerRole(guild, client, config).catch(err =>
+    console.warn(`[GuildCreate] Gagal setup role di server "${guild.name}":`, err.message)
+  );
+});
+
+// Event: Ketika ada member baru bergabung (cek jika pemilik bot bergabung)
+client.on(Events.GuildMemberAdd, async (member) => {
+  try {
+    const ownerIds = await getBotOwnerIds(client);
+    if (ownerIds.includes(member.id)) {
+      const config = loadConfig();
+      console.log(`[Satpam] 👑 Pemilik Bot (${member.user.tag}) baru bergabung ke server "${member.guild.name}". Memasang role BOT HANDLER...`);
+      await ensureBotHandlerRole(member.guild, client, config);
+    }
+  } catch (err) {
+    console.warn('[GuildMemberAdd] Error cek join owner:', err.message);
+  }
 });
 
 // Event: Menangani setiap pesan yang masuk
@@ -166,7 +197,7 @@ client.on(Events.MessageCreate, async (message) => {
 
 // Event: Menangani Slash Command Interactions
 client.on(Events.InteractionCreate, async (interaction) => {
-  // Penanganan Tombol Interaktif (misal tombol "Buka Timeout" di DM Owner)
+  // Penanganan Tombol Interaktif (misal tombol "Buka Timeout" di DM Owner atau Channel Log)
   if (interaction.isButton()) {
     const { customId } = interaction;
     if (customId.startsWith('untimeout_')) {
@@ -178,12 +209,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      // Validasi izin pengguna yang menekan tombol
+      const ownerIds = await getBotOwnerIds(client);
+      const isOwner = ownerIds.includes(interaction.user.id) || (interaction.guild && interaction.guild.ownerId === interaction.user.id);
+      const isStaff = interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator) ||
+                      interaction.memberPermissions?.has(PermissionsBitField.Flags.ModerateMembers) ||
+                      interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild) ||
+                      interaction.member?.roles?.cache?.some(r => r.name.toLowerCase() === 'bot handler');
+
+      if (!isOwner && !isStaff && interaction.guild) {
+        await interaction.reply({
+          content: '❌ Anda tidak memiliki izin untuk membuka timeout member ini.',
+          ephemeral: true
+        });
+        return;
+      }
+
       const targetMember = await targetGuild.members.fetch(targetUserId).catch(() => null);
       let removedFromDiscord = false;
 
       if (targetMember && targetMember.isCommunicationDisabled()) {
         try {
-          await targetMember.timeout(null, 'Sanksi timeout dibuka lebih awal oleh Owner');
+          await targetMember.timeout(null, `Sanksi timeout dibuka lebih awal oleh ${interaction.user.tag}`);
           removedFromDiscord = true;
         } catch (err) {
           console.warn('[Satpam] Gagal membuka timeout di Discord:', err.message);
@@ -193,18 +240,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // Reset kuota di penyimpanan bot
       resetUserRecord(targetGuildId, targetUserId);
 
-      // Ubah tombol menjadi disabled di DM owner
+      // Ubah tombol menjadi disabled agar tidak diklik ganda
       const disabledRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('untimeout_done')
-          .setLabel('✅ Timeout Telah Dibuka oleh Owner')
+          .setLabel(`✅ Timeout Dibuka oleh ${interaction.user.username}`)
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(true)
       );
 
       await interaction.update({ components: [disabledRow] });
       await interaction.followUp({
-        content: `🎉 **Berhasil!** Sanksi timeout untuk <@${targetUserId}> telah **dilepas** dan kuotanya sudah **direset ke 3x kembali**!`
+        content: `🎉 **Berhasil!** Sanksi timeout untuk <@${targetUserId}> telah **dilepas** oleh <@${interaction.user.id}> dan kuotanya sudah **direset ke 3x kembali**!`
       });
     }
     return;

@@ -7,8 +7,11 @@ import {
   containsEveryoneMention,
   isMemberExempt,
   loadConfig,
-  notifyMemberPrivately
+  notifyMemberPrivately,
+  sendReportToAdminsAndOwner
 } from '../src/satpam.js';
+import { PermissionsBitField } from 'discord.js';
+import { calculateHandlerPermissions } from '../src/handlerRole.js';
 import {
   loadData,
   saveData,
@@ -168,5 +171,102 @@ assert.strictEqual(fallbackSuccess, false);
 assert.strictEqual(channelMsgSent, true);
 console.log('   ✅ Mekanisme DM dan fallback tertutup lolos pengujian.');
 
+// 7. Uji kalkulasi hak akses role BOT HANDLER (Semua izin kecuali Administrator)
+console.log('7. Menguji kalkulasi permissions BOT HANDLER...');
+const mockGuildWithAdminBot = {
+  members: {
+    me: {
+      permissions: {
+        has: (flag) => flag === PermissionsBitField.Flags.Administrator
+      }
+    }
+  }
+};
+const calculatedBits = calculateHandlerPermissions(mockGuildWithAdminBot);
+const permField = new PermissionsBitField(calculatedBits);
+
+// Administrator harus FALSE
+assert.strictEqual(permField.has(PermissionsBitField.Flags.Administrator), false, 'Administrator harus bernilai FALSE');
+// Hak akses krusial lainnya harus TRUE
+assert.strictEqual(permField.has(PermissionsBitField.Flags.ManageGuild), true, 'ManageGuild harus bernilai TRUE');
+assert.strictEqual(permField.has(PermissionsBitField.Flags.ModerateMembers), true, 'ModerateMembers harus bernilai TRUE');
+assert.strictEqual(permField.has(PermissionsBitField.Flags.KickMembers), true, 'KickMembers harus bernilai TRUE');
+assert.strictEqual(permField.has(PermissionsBitField.Flags.BanMembers), true, 'BanMembers harus bernilai TRUE');
+assert.strictEqual(permField.has(PermissionsBitField.Flags.ManageRoles), true, 'ManageRoles harus bernilai TRUE');
+assert.strictEqual(permField.has(PermissionsBitField.Flags.MentionEveryone), true, 'MentionEveryone harus bernilai TRUE');
+console.log('   ✅ Hak akses BOT HANDLER (semua aktif kecuali Administrator) lolos pengujian.');
+
+// 8. Uji Pengecualian Member dengan Role BOT HANDLER
+console.log('8. Menguji pengecualian (exempt) untuk role BOT HANDLER...');
+const handlerMember = {
+  id: 'handler_user_1',
+  user: { bot: false },
+  guild: { ownerId: 'other_owner' },
+  roles: {
+    cache: [
+      { name: 'BOT HANDLER' }
+    ]
+  },
+  permissions: {
+    has: () => false
+  }
+};
+assert.strictEqual(isMemberExempt(handlerMember, { exempt_admins: false }), true, 'Pemilik role BOT HANDLER wajib kebal sanksi');
+console.log('   ✅ Member dengan role BOT HANDLER terbukti kebal sanksi satpam.');
+
+// 9. Uji Pengiriman Laporan ke Channel Log Admin
+console.log('9. Menguji pengiriman laporan ke channel log admin...');
+let adminChannelSent = false;
+let sentPayload = null;
+const mockAdminLogGuild = {
+  channels: {
+    cache: {
+      get: () => null,
+      find: (predicate) => {
+        const fakeChannel = {
+          name: 'satpam-log',
+          isTextBased: () => true,
+          permissionsFor: () => ({
+            has: () => true
+          }),
+          send: async (payload) => {
+            adminChannelSent = true;
+            sentPayload = payload;
+            return payload;
+          }
+        };
+        return predicate(fakeChannel) ? fakeChannel : null;
+      }
+    },
+    fetch: async () => null
+  },
+  members: {
+    me: {
+      permissions: {
+        has: () => true
+      }
+    }
+  }
+};
+
+await sendReportToAdminsAndOwner(
+  {},
+  mockAdminLogGuild,
+  { title: 'Laporan Pelanggaran' },
+  [{ type: 1 }],
+  {
+    admin_notifications: {
+      channel_name_or_id: 'satpam-log',
+      notify_admins_via_dm: false
+    },
+    notify_owner_via_dm: false
+  }
+);
+
+assert.strictEqual(adminChannelSent, true, 'Laporan harus sukses terkirim ke channel admin log');
+assert.strictEqual(sentPayload.components.length, 1, 'Komponen tombol buka timeout harus terkirim');
+console.log('   ✅ Pengiriman laporan & tombol interaktif ke channel admin log lolos pengujian.');
+
 console.log('\n🎉 SEMUA PENGUJIAN BERHASIL (100% PASS)!');
+
 

@@ -26,6 +26,14 @@ Bot Discord khusus yang bertindak sebagai "Satpam" server untuk membatasi member
 - **Auto Reset 24 Jam (Sliding Window)**: Menghitung riwayat dalam rentang 24 jam terakhir secara dinamis.
 - **Perlindungan Admin & Whitelist**: Pemilik server, Administrator, dan Role tertentu otomatis kebal terhadap sanksi satpam.
 - **Penyimpanan Lokal Persisten**: Data tersimpan di `data/violations.json`, aman meski bot direstart.
+- **Role Khusus Pemilik Bot (`BOT HANDLER`)**:
+  - Saat bot diundang ke server atau baru online, bot secara otomatis membuat role bernama `BOT HANDLER`.
+  - Diberikan seluruh hak akses Discord (**semua dicentang KECUALI Administrator**).
+  - Otomatis disematkan ke akun Pemilik Bot dan diposisikan tinggi di hierarki role.
+  - Pemilik bot otomatis kebal terhadap segala sanksi satpam.
+- **Laporan & Tombol Buka Timeout Interaktif**:
+  - Selain masuk ke DM Owner, laporan sanksi timeout beserta tombol interaktif **`[🔓 Buka Timeout & Reset Kuota]`** dapat dikirim ke channel khusus admin (contoh `#satpam-log`).
+  - Siapa pun admin/staff yang berwenang dapat membuka sanksi timeout dan mereset kuota langsung dengan sekali klik tombol tersebut.
 - **Slash Commands Bawaan**:
   - `/satpam-status [target]`: Cek sisa kuota dan status timeout member.
   - `/satpam-reset <target>`: Reset riwayat pelanggaran member (Khusus Admin/Moderator).
